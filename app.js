@@ -34,9 +34,19 @@ async function search(q, offset = 0) {
   const d = await jget(`${API}/search/comic?q=${encodeURIComponent(q)}&limit=21&offset=${offset}&platform=3`, APP_HEADERS);
   return (d.results?.list || []).map(slim);
 }
-async function browse(ordering = '-popular', offset = 0) {
-  const d = await jget(`${API}/comics?limit=21&offset=${offset}&ordering=${encodeURIComponent(ordering)}&platform=3`, APP_HEADERS);
+async function browse(ordering = '-popular', offset = 0, theme = '') {
+  const t = theme ? `&theme=${encodeURIComponent(theme)}` : '';
+  const d = await jget(`${API}/comics?limit=21&offset=${offset}&ordering=${encodeURIComponent(ordering)}${t}&platform=3`, APP_HEADERS);
   return (d.results?.list || []).map(slim);
+}
+let themesCache = null;
+async function getThemes() {
+  if (themesCache) return themesCache;
+  try {
+    const d = await jget(`${API}/theme/comic/count?platform=3&free_type=1`, APP_HEADERS);
+    themesCache = ((d.results?.list || d.results) || []).map(t => ({ path_word: t.path_word, name: t.name })).filter(t => t.path_word);
+  } catch { themesCache = []; }
+  return themesCache;
 }
 function slim(c) {
   const m = { path_word: c.path_word, name: c.name, cover: c.cover, author: (c.author || []).map(a => a.name) };
@@ -106,7 +116,7 @@ let store = load();
 const cs = (pw) => (store[pw] ||= { read: {}, downloaded: {} });
 
 // ---------------- nav ----------------
-let homeCtx = { mode: 'browse', ordering: '-popular', q: '' };
+let homeCtx = { mode: 'browse', ordering: '-popular', q: '', theme: '' };
 let currentPw = null;
 const setBack = (s) => { backBtn.hidden = !s; };
 backBtn.onclick = () => { if (currentPw) showHome(); };
@@ -119,12 +129,28 @@ async function showHome(keepInput = false) {
   const tabs = el('div', { className: 'tabs' });
   for (const [ord, label] of [['-popular', '熱門'], ['-datetime_updated', '最近更新'], ['-datetime_created', '最新上架']]) {
     const b = el('button', { className: 'tab' + (homeCtx.mode === 'browse' && homeCtx.ordering === ord ? ' active' : ''), textContent: label });
-    b.onclick = () => { homeCtx = { mode: 'browse', ordering: ord, q: '' }; searchInput.value = ''; showHome(); };
+    b.onclick = () => { homeCtx = { ...homeCtx, mode: 'browse', ordering: ord, q: '' }; searchInput.value = ''; showHome(); };
     tabs.append(b);
   }
-  view.append(tabs, el('div', { className: 'loading', textContent: '載入中…' }));
+  view.append(tabs);
+  // 題材橫向選擇條(僅瀏覽模式)
+  if (homeCtx.mode === 'browse') {
+    const themes = await getThemes();
+    if (themes.length) {
+      const trow = el('div', { className: 'tabs theme-row' });
+      const chip = (pw, name) => {
+        const b = el('button', { className: 'tab' + (homeCtx.theme === pw ? ' active' : ''), textContent: name });
+        b.onclick = () => { homeCtx = { ...homeCtx, mode: 'browse', q: '', theme: pw }; searchInput.value = ''; showHome(); };
+        return b;
+      };
+      trow.append(chip('', '全部題材'));
+      for (const t of themes) trow.append(chip(t.path_word, t.name));
+      view.append(trow);
+    }
+  }
+  view.append(el('div', { className: 'loading', textContent: '載入中…' }));
   try {
-    const list = homeCtx.mode === 'search' ? await search(homeCtx.q) : await browse(homeCtx.ordering);
+    const list = homeCtx.mode === 'search' ? await search(homeCtx.q) : await browse(homeCtx.ordering, 0, homeCtx.theme);
     view.lastChild.remove();
     if (!list.length) return void view.append(el('div', { className: 'empty', textContent: '沒有結果' }));
     const grid = el('div', { className: 'grid' });

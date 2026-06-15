@@ -43,6 +43,10 @@ body { padding-top: calc(52px + var(--safe-top)); }
 .tabs { display: flex; gap: 8px; margin: 0 4px 14px; flex-wrap: wrap; }
 .tab { padding: 6px 14px; border-radius: 16px; background: var(--panel); color: var(--muted); border: none; font-size: 14px; }
 .tab.active { background: var(--accent); color: #fff; }
+/* 題材橫向滾動條 */
+.theme-row { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; margin-top: -6px; }
+.theme-row::-webkit-scrollbar { display: none; }
+.theme-row .tab { flex: 0 0 auto; white-space: nowrap; font-size: 13px; padding: 5px 12px; }
 
 .grid {
   display: grid; gap: 14px;
