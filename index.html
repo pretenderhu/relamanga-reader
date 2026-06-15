@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <title>漫畫</title>
+  <meta name="theme-color" content="#000000" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="漫畫" />
+  <link rel="apple-touch-icon" href="icons/icon-180.png" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header id="topbar">
+    <button id="backBtn" class="icon" hidden aria-label="返回">‹</button>
+    <form id="searchForm">
+      <input id="searchInput" type="search" placeholder="搜尋漫畫…" autocomplete="off" enterkeyhint="search" />
+    </form>
+    <button id="dlBtn" class="icon" aria-label="設定">⚙</button>
+  </header>
+
+  <main id="view"></main>
+
+  <div id="reader" hidden>
+    <div id="pageWrap"><img id="page" alt="" /></div>
+    <div class="zone zone-left"></div>
+    <div class="zone zone-center"></div>
+    <div class="zone zone-right"></div>
+    <div id="readerTop" class="reader-ui">
+      <button id="readerBack" class="icon">‹</button>
+      <span id="readerTitle"></span>
+    </div>
+    <div id="readerBottom" class="reader-ui">
+      <button id="prevCh">上一話</button>
+      <span id="pageInd">0 / 0</span>
+      <button id="nextCh">下一話</button>
+    </div>
+    <div id="dlChip" hidden></div>
+    <div id="spinner" hidden></div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+    }
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+  </script>
+</body>
+</html>
