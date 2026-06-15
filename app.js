@@ -30,14 +30,17 @@ async function jget(url, headers) {
   return r.json();
 }
 
-async function search(q, offset = 0) {
-  const d = await jget(`${API}/search/comic?q=${encodeURIComponent(q)}&limit=21&offset=${offset}&platform=3`, APP_HEADERS);
-  return (d.results?.list || []).map(slim);
-}
-async function browse(ordering = '-popular', offset = 0, theme = '') {
-  const t = theme ? `&theme=${encodeURIComponent(theme)}` : '';
-  const d = await jget(`${API}/comics?limit=21&offset=${offset}&ordering=${encodeURIComponent(ordering)}${t}&platform=3`, APP_HEADERS);
-  return (d.results?.list || []).map(slim);
+// one page (21) of the current feed (search OR browse+theme), with total for pagination
+async function fetchFeed(offset = 0) {
+  let url;
+  if (homeCtx.mode === 'search') {
+    url = `${API}/search/comic?q=${encodeURIComponent(homeCtx.q)}&limit=21&offset=${offset}&platform=3`;
+  } else {
+    const t = homeCtx.theme ? `&theme=${encodeURIComponent(homeCtx.theme)}` : '';
+    url = `${API}/comics?limit=21&offset=${offset}&ordering=${encodeURIComponent(homeCtx.ordering)}${t}&platform=3`;
+  }
+  const d = await jget(url, APP_HEADERS);
+  return { list: (d.results?.list || []).map(slim), total: d.results?.total || 0 };
 }
 let themesCache = null;
 async function getThemes() {
@@ -117,6 +120,7 @@ const cs = (pw) => (store[pw] ||= { read: {}, downloaded: {} });
 
 // ---------------- nav ----------------
 let homeCtx = { mode: 'browse', ordering: '-popular', q: '', theme: '' };
+let feed = null;   // pagination state
 let currentPw = null;
 const setBack = (s) => { backBtn.hidden = !s; };
 backBtn.onclick = () => { if (currentPw) showHome(); };
@@ -148,15 +152,50 @@ async function showHome(keepInput = false) {
       view.append(trow);
     }
   }
-  view.append(el('div', { className: 'loading', textContent: '載入中…' }));
+  const grid = el('div', { className: 'grid' });
+  const sentinel = el('div', { className: 'loading', textContent: '載入中…' });
+  view.append(grid, sentinel);
+  feed = { offset: 0, total: Infinity, loading: false, done: false, grid, sentinel };
+  await loadMore();   // first page
+  await fill();       // load enough to fill a tall screen
+  bindInfiniteScroll();
+}
+
+// load the next page of the current feed and append; mark done at the end
+async function loadMore() {
+  if (!feed || feed.loading || feed.done) return;
+  feed.loading = true;
+  feed.sentinel.hidden = false; feed.sentinel.textContent = '載入中…'; feed.sentinel.onclick = null;
   try {
-    const list = homeCtx.mode === 'search' ? await search(homeCtx.q) : await browse(homeCtx.ordering, 0, homeCtx.theme);
-    view.lastChild.remove();
-    if (!list.length) return void view.append(el('div', { className: 'empty', textContent: '沒有結果' }));
-    const grid = el('div', { className: 'grid' });
-    for (const c of list) grid.append(card(c));
-    view.append(grid);
-  } catch (e) { view.lastChild.remove(); view.append(errBox(e)); }
+    const { list, total } = await fetchFeed(feed.offset);
+    feed.total = total;
+    for (const c of list) feed.grid.append(card(c));
+    feed.offset += list.length;
+    if (!list.length || feed.offset >= total) {
+      feed.done = true;
+      feed.sentinel.textContent = feed.grid.children.length ? `— 共 ${total} 部 · 已全部載入 —` : '沒有結果';
+    } else {
+      feed.sentinel.textContent = `已載入 ${feed.offset} / ${total}`;
+    }
+  } catch (e) {
+    feed.sentinel.textContent = '載入失敗,點此重試';
+    feed.sentinel.onclick = () => { loadMore().then(fill); };
+  } finally { feed.loading = false; }
+}
+
+const onHome = () => currentPw === null && readerEl.hidden;
+// keep loading while the bottom is near (fills tall viewports on first load, and on scroll-to-bottom)
+async function fill() {
+  const se = document.scrollingElement;
+  while (feed && !feed.done && !feed.loading && onHome()) {
+    if (se.scrollHeight - (se.scrollTop + window.innerHeight) > 800) break; // enough buffer below
+    await loadMore();
+  }
+}
+let scrollBound = false;
+function bindInfiniteScroll() {
+  if (scrollBound) return; scrollBound = true;
+  window.addEventListener('scroll', () => { if (onHome()) fill(); }, { passive: true });
 }
 function card(c) {
   const n = el('div', { className: 'card' }, [
