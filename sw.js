@@ -3,15 +3,20 @@
 //  manga CDN images (cross-origin)    -> cache-first, version-independent (the downloaded pages; opaque OK)
 //  mangacopy API / reader pages       -> network-first, version-independent cache (so a downloaded
 //                                        chapter's image list + page HTML are readable offline)
-const VERSION = 'v1';
+const VERSION = 'v2';
 const SHELL = `shell-${VERSION}`, IMG = 'img', DATA = 'data';
 const SHELL_FILES = ['./', 'index.html', 'app.js', 'styles.css', 'manifest.webmanifest',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 const IMG_HOST = /(^|\.)mangafun[a-z]?\.(fun|xyz)$/i;
-const DATA_HOST = /(^|\.)(mangacopy\.com|2026copy\.com|copy2000\.online)$/i;
+const DATA_HOST = /(^|\.)(manga2026\.xyz|mangacopy\.com|2026copy\.com|copy2000\.online)$/i;
 
-self.addEventListener('install', (e) => e.waitUntil(caches.open(SHELL).then(c => c.addAll(SHELL_FILES)).then(() => self.skipWaiting())));
+self.addEventListener('install', (e) => e.waitUntil((async () => {
+  const c = await caches.open(SHELL);
+  // fetch with cache:'reload' so we never cache a stale shell from the browser HTTP cache
+  await Promise.all(SHELL_FILES.map(f => fetch(f, { cache: 'reload' }).then(r => r.ok && c.put(f, r)).catch(() => {})));
+  await self.skipWaiting();
+})()));
 self.addEventListener('activate', (e) => e.waitUntil((async () => {
   const keep = new Set([SHELL, IMG, DATA]);
   for (const k of await caches.keys()) if (!keep.has(k)) await caches.delete(k);
@@ -42,7 +47,7 @@ async function cacheFirst(req, name) {
 async function networkFirst(req, name, navFallback) {
   const cache = await caches.open(name);
   try {
-    const res = await fetch(req);
+    const res = await fetch(req, { cache: 'no-cache' }); // always revalidate (fresh app shell / API)
     if (res && res.ok) await cache.put(req, res.clone()).catch(() => {});
     return res;
   } catch {

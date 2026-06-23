@@ -129,3 +129,6 @@ body { padding-top: calc(52px + var(--safe-top)); }
 .settings-row { display: flex; justify-content: space-between; align-items: center; padding: 14px 4px; border-bottom: 1px solid #26262b; }
 .btn { background: var(--panel); color: var(--text); border: none; padding: 8px 16px; border-radius: 18px; font-size: 14px; }
 .btn.danger { background: #3a1718; color: #ff8a8a; }
+.fav-btn { margin-top: 10px; cursor: pointer; }
+.fav-btn.on { background: var(--accent); color: #fff; }
+#favBtn { font-size: 18px; }

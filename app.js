@@ -65,26 +65,30 @@ const siteFetch = (url) => fetch(url);
 // One request → all groups + their chapters (decrypted).
 async function getComic(pw) {
   if (comicCache[pw]) return comicCache[pw];
-  const groups = {};
-  let total = 0;
-  try {
-    const d = await siteFetch(`${SITE}/comicdetail/${pw}/chapters`).then(r => r.json());
-    if (d.results) {
-      const j = JSON.parse(await aesDecrypt(d.results));
-      const groupsRaw = j.build?.groups || j.groups || {};
-      for (const [k, g] of Object.entries(groupsRaw)) {
-        const chapters = (g.chapters || []).map(c => ({
-          uuid: c.uuid || c.id || c.chapter_id || c.comic_chapter_id,
-          name: c.name || c.title || c.tname || '',
-          index: c.index ?? c.idx ?? 0,
-        })).filter(c => c.uuid);
-        groups[g.path_word || k] = { path_word: g.path_word || k, name: g.name || k, count: g.count ?? chapters.length, chapters };
-        total += chapters.length;
+  // The proxy route can time out intermittently; retry a few times (this site isn't rate-limited).
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const groups = {};
+    let total = 0;
+    try {
+      const d = await siteFetch(`${SITE}/comicdetail/${pw}/chapters`).then(r => r.json());
+      if (d.results) {
+        const j = JSON.parse(await aesDecrypt(d.results));
+        const groupsRaw = j.build?.groups || j.groups || {};
+        for (const [k, g] of Object.entries(groupsRaw)) {
+          const chapters = (g.chapters || []).map(c => ({
+            uuid: c.uuid || c.id || c.chapter_id || c.comic_chapter_id,
+            name: c.name || c.title || c.tname || '',
+            index: c.index ?? c.idx ?? 0,
+          })).filter(c => c.uuid);
+          groups[g.path_word || k] = { path_word: g.path_word || k, name: g.name || k, count: g.count ?? chapters.length, chapters };
+          total += chapters.length;
+        }
       }
-    }
-  } catch { /* return empty; user can refresh */ }
-  if (total > 0) comicCache[pw] = groups;  // cache only when populated, so a refresh can retry
-  return groups;
+    } catch { /* network/timeout — retry */ }
+    if (total > 0) { comicCache[pw] = groups; return groups; }
+    if (attempt < 2) await new Promise(r => setTimeout(r, 800));
+  }
+  return {};
 }
 
 // One request → reader page → decrypt the embedded contentKey → ordered image URLs.
@@ -106,7 +110,7 @@ async function getImages(pw, uuid) {
 const $ = (s, r = document) => r.querySelector(s);
 const el = (tag, props = {}, kids = []) => { const n = Object.assign(document.createElement(tag), props); for (const k of [].concat(kids)) n.append(k); return n; };
 
-const view = $('#view'), backBtn = $('#backBtn'), dlBtn = $('#dlBtn');
+const view = $('#view'), backBtn = $('#backBtn'), dlBtn = $('#dlBtn'), favNav = $('#favBtn');
 const searchForm = $('#searchForm'), searchInput = $('#searchInput');
 const readerEl = $('#reader'), pageImg = $('#page'), readerTitle = $('#readerTitle'), pageInd = $('#pageInd');
 const dlChip = $('#dlChip'), spinner = $('#spinner');
@@ -117,6 +121,11 @@ const load = () => { try { return JSON.parse(localStorage.getItem(LS) || '{}'); 
 const save = (p) => localStorage.setItem(LS, JSON.stringify(p));
 let store = load();
 const cs = (pw) => (store[pw] ||= { read: {}, downloaded: {} });
+
+// ---------------- favorites / bookmarks (localStorage) ----------------
+let favs = (() => { try { return JSON.parse(localStorage.getItem('rm.favs') || '{}'); } catch { return {}; } })();
+const saveFavs = () => localStorage.setItem('rm.favs', JSON.stringify(favs));
+const isFav = (pw) => !!favs[pw];
 
 // ---------------- nav ----------------
 let homeCtx = { mode: 'browse', ordering: '-popular', q: '', theme: '' };
@@ -225,9 +234,13 @@ async function showDetail(pw, group) {
     const meta = metaCache[pw] || { name: pw, cover: '', author: [] };
     const st = cs(pw);
     view.innerHTML = '';
+    const favBtn = el('button', { className: 'btn fav-btn' });
+    const syncFav = () => { const on = isFav(pw); favBtn.textContent = on ? '★ 已收藏' : '☆ 收藏'; favBtn.classList.toggle('on', on); };
+    favBtn.onclick = () => { if (favs[pw]) delete favs[pw]; else favs[pw] = { name: meta.name, cover: meta.cover, ts: Date.now() }; saveFavs(); syncFav(); };
+    syncFav();
     view.append(el('div', { className: 'detail-head' }, [
       el('img', { className: 'cover', src: meta.cover, alt: meta.name }),
-      el('div', {}, [el('h1', { textContent: meta.name }), el('div', { className: 'meta', textContent: (meta.author || []).join(', ') })]),
+      el('div', {}, [el('h1', { textContent: meta.name }), el('div', { className: 'meta', textContent: (meta.author || []).join(', ') }), favBtn]),
     ]));
     if (st.chapterUuid && st.group === active && g.chapters.some(c => c.uuid === st.chapterUuid)) {
       const r = el('button', { className: 'resume', textContent: `繼續閱讀：${st.chapterName || ''}` });
@@ -291,10 +304,17 @@ async function openReader(pw, uuid, startPage = 0, startAtEnd = false, group = '
 }
 function renderPage() {
   const url = R.images[R.page]; if (!url) return;
-  pageImg.src = url; pageInd.textContent = `${R.page + 1} / ${R.images.length}`;
+  pageInd.textContent = `${R.page + 1} / ${R.images.length}`;
+  loadPageImg(url, 0);  // with retry (CDN/proxy can be flaky)
   for (const i of [R.page + 1, R.page + 2, R.page - 1]) if (R.images[i]) { const im = new Image(); im.src = R.images[i]; }
   if (R.page >= R.images.length - 1) markRead(R.pw, R.uuid);
   persist();
+}
+// load the current page image; retry on failure (the image route can time out intermittently)
+function loadPageImg(url, tries) {
+  pageImg.onerror = () => { if (R.images[R.page] === url && tries < 5) setTimeout(() => loadPageImg(url, tries + 1), 700); };
+  pageImg.onload = () => { pageImg.onerror = null; };
+  pageImg.src = tries ? url + (url.includes('?') ? '&' : '?') + 'r=' + tries : url;
 }
 function persist() { const st = cs(R.pw); st.chapterUuid = R.uuid; st.chapterName = R.name; st.page = R.page; st.group = R.group; save(store); }
 const markRead = (pw, uuid) => { cs(pw).read[uuid] = true; save(store); };
@@ -313,7 +333,12 @@ async function downloadChapter(pw, uuid, urls) {
   if (st.downloaded[uuid]) { dlChip.hidden = true; return; }
   const total = urls.length; let ok = 0, fail = 0, i = 0;
   dlChip.hidden = false; dlChip.textContent = `下載中 0/${total}`;
-  const loadOne = (u) => new Promise(res => { const im = new Image(); im.onload = () => res(true); im.onerror = () => res(false); im.src = u; });
+  const loadOne = (u, tries = 0) => new Promise(res => {
+    const im = new Image();
+    im.onload = () => res(true);
+    im.onerror = () => { if (tries < 2 && !ac.aborted) setTimeout(() => res(loadOne(u, tries + 1)), 500); else res(false); };
+    im.src = tries ? u + (u.includes('?') ? '&' : '?') + 'r=' + tries : u;
+  });
   const worker = async () => {
     while (i < urls.length && !ac.aborted) {
       const u = urls[i++]; (await loadOne(u)) ? ok++ : fail++;
@@ -346,6 +371,23 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === 'ArrowLeft') prevPage();
   else if (e.key === 'Escape') { closeReader(); if (currentPw) showDetail(currentPw); }
 });
+
+// ================= FAVORITES =================
+favNav.onclick = showFavs;
+function showFavs() {
+  currentPw = null; setBack(true); closeReader(); searchInput.value = '';
+  backBtn.onclick = () => { backBtn.onclick = () => { if (currentPw) showHome(); }; showHome(); };
+  view.innerHTML = '';
+  view.append(el('h1', { textContent: '我的收藏', style: 'font-size:20px;margin:4px 4px 12px' }));
+  const list = Object.entries(favs).sort((a, b) => (b[1].ts || 0) - (a[1].ts || 0));
+  if (!list.length) { view.append(el('div', { className: 'empty', textContent: '還沒有收藏。打開一部漫畫,點「☆ 收藏」即可加入。' })); return; }
+  const grid = el('div', { className: 'grid' });
+  for (const [pw, m] of list) {
+    metaCache[pw] = metaCache[pw] || { name: m.name, cover: m.cover, author: [] };
+    grid.append(card({ path_word: pw, name: m.name, cover: m.cover, author: [] }));
+  }
+  view.append(grid);
+}
 
 // ================= SETTINGS =================
 dlBtn.onclick = showSettings;
