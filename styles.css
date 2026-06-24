@@ -132,3 +132,5 @@ body { padding-top: calc(52px + var(--safe-top)); }
 .fav-btn { margin-top: 10px; cursor: pointer; }
 .fav-btn.on { background: var(--accent); color: #fff; }
 #favBtn { font-size: 18px; }
+.author-link { color: var(--accent); cursor: pointer; }
+.author-link:active { opacity: .6; }

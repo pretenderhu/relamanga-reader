@@ -36,6 +36,8 @@ async function fetchFeed(offset = 0) {
   let url;
   if (homeCtx.mode === 'search') {
     url = `${API}/search/comic?q=${encodeURIComponent(homeCtx.q)}&limit=21&offset=${offset}&platform=3`;
+  } else if (homeCtx.mode === 'author') {
+    url = `${API}/comics?author=${encodeURIComponent(homeCtx.author)}&limit=21&offset=${offset}&ordering=${encodeURIComponent(homeCtx.ordering || '-popular')}&platform=3`;
   } else {
     const t = homeCtx.theme ? `&theme=${encodeURIComponent(homeCtx.theme)}` : '';
     url = `${API}/comics?limit=21&offset=${offset}&free_type=${homeCtx.freeType}&ordering=${encodeURIComponent(homeCtx.ordering)}${t}&platform=3`;
@@ -53,7 +55,7 @@ async function getThemes(freeType = 1) {
   return themesCache[freeType];
 }
 function slim(c) {
-  const m = { path_word: c.path_word, name: c.name, cover: c.cover, author: (c.author || []).map(a => a.name) };
+  const m = { path_word: c.path_word, name: c.name, cover: c.cover, author: (c.author || []).map(a => ({ name: a.name, path_word: a.path_word })) };
   metaCache[c.path_word] = m;
   return m;
 }
@@ -240,7 +242,7 @@ function card(c) {
   const n = el('div', { className: 'card' }, [
     el('img', { className: 'cover', src: c.cover, loading: 'lazy', alt: c.name }),
     el('div', { className: 't', textContent: c.name }),
-    el('div', { className: 'a', textContent: (c.author || []).join(', ') }),
+    el('div', { className: 'a', textContent: (c.author || []).map(a => a.name).join(', ') }),
   ]);
   n.onclick = () => showDetail(c.path_word);
   return n;
@@ -270,7 +272,7 @@ async function showDetail(pw, group) {
     syncFav();
     view.append(el('div', { className: 'detail-head' }, [
       el('img', { className: 'cover', src: meta.cover, alt: meta.name }),
-      el('div', {}, [el('h1', { textContent: meta.name }), el('div', { className: 'meta', textContent: (meta.author || []).join(', ') }), favBtn]),
+      el('div', {}, [el('h1', { textContent: meta.name }), authorsEl(meta.author, pw), favBtn]),
     ]));
     if (st.chapterUuid && st.group === active && g.chapters.some(c => c.uuid === st.chapterUuid)) {
       const r = el('button', { className: 'resume', textContent: `繼續閱讀：${st.chapterName || ''}` });
@@ -401,6 +403,35 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === 'ArrowLeft') prevPage();
   else if (e.key === 'Escape') { closeReader(); if (currentPw) showDetail(currentPw); }
 });
+
+// ================= AUTHOR =================
+// clickable author names → that author's works
+function authorsEl(authors, fromPw) {
+  const d = el('div', { className: 'meta authors' });
+  (authors || []).forEach((a, i) => {
+    if (i) d.append(', ');
+    if (a && a.path_word) {
+      const link = el('a', { className: 'author-link', textContent: a.name });
+      link.onclick = () => showAuthor(a.path_word, a.name, fromPw);
+      d.append(link);
+    } else d.append((a && a.name) || '');
+  });
+  return d;
+}
+async function showAuthor(authorPw, name, fromPw) {
+  currentPw = null; setBack(true); closeReader(); searchInput.value = '';
+  backBtn.onclick = () => { backBtn.onclick = () => { if (currentPw) showHome(); }; fromPw ? showDetail(fromPw) : showHome(); };
+  homeCtx = { mode: 'author', author: authorPw, authorName: name, ordering: '-popular' };
+  view.innerHTML = '';
+  view.append(el('h1', { textContent: `作者:${name}`, style: 'font-size:20px;margin:4px 4px 12px' }));
+  const grid = el('div', { className: 'grid' });
+  const sentinel = el('div', { className: 'loading', textContent: '載入中…' });
+  view.append(grid, sentinel);
+  feed = { offset: 0, total: Infinity, loading: false, done: false, grid, sentinel };
+  await loadMore();
+  await fill();
+  bindInfiniteScroll();
+}
 
 // ================= FAVORITES =================
 favNav.onclick = showFavs;
