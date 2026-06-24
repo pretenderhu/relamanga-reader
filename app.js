@@ -38,19 +38,19 @@ async function fetchFeed(offset = 0) {
     url = `${API}/search/comic?q=${encodeURIComponent(homeCtx.q)}&limit=21&offset=${offset}&platform=3`;
   } else {
     const t = homeCtx.theme ? `&theme=${encodeURIComponent(homeCtx.theme)}` : '';
-    url = `${API}/comics?limit=21&offset=${offset}&ordering=${encodeURIComponent(homeCtx.ordering)}${t}&platform=3`;
+    url = `${API}/comics?limit=21&offset=${offset}&free_type=${homeCtx.freeType}&ordering=${encodeURIComponent(homeCtx.ordering)}${t}&platform=3`;
   }
   const d = await jget(url, APP_HEADERS);
   return { list: (d.results?.list || []).map(slim), total: d.results?.total || 0 };
 }
-let themesCache = null;
-async function getThemes() {
-  if (themesCache) return themesCache;
+const themesCache = {};
+async function getThemes(freeType = 1) {
+  if (themesCache[freeType]) return themesCache[freeType];
   try {
-    const d = await jget(`${API}/theme/comic/count?platform=3&free_type=1`, APP_HEADERS);
-    themesCache = ((d.results?.list || d.results) || []).map(t => ({ path_word: t.path_word, name: t.name })).filter(t => t.path_word);
-  } catch { themesCache = []; }
-  return themesCache;
+    const d = await jget(`${API}/theme/comic/count?platform=3&free_type=${freeType}`, APP_HEADERS);
+    themesCache[freeType] = ((d.results?.list || d.results) || []).map(t => ({ path_word: t.path_word, name: t.name })).filter(t => t.path_word);
+  } catch { themesCache[freeType] = []; }
+  return themesCache[freeType];
 }
 function slim(c) {
   const m = { path_word: c.path_word, name: c.name, cover: c.cover, author: (c.author || []).map(a => a.name) };
@@ -148,7 +148,7 @@ const saveFavs = () => localStorage.setItem('rm.favs', JSON.stringify(favs));
 const isFav = (pw) => !!favs[pw];
 
 // ---------------- nav ----------------
-let homeCtx = { mode: 'browse', ordering: '-popular', q: '', theme: '' };
+let homeCtx = { mode: 'browse', ordering: '-popular', q: '', theme: '', freeType: 1 };
 let feed = null;   // pagination state
 let currentPw = null;
 const setBack = (s) => { backBtn.hidden = !s; };
@@ -159,6 +159,16 @@ async function showHome(keepInput = false) {
   currentPw = null; setBack(false); closeReader();
   if (!keepInput) searchInput.value = homeCtx.q;
   view.innerHTML = '';
+  // 免費 / 付費 切換(各有各的題材標籤)
+  if (homeCtx.mode === 'browse') {
+    const ft = el('div', { className: 'tabs' });
+    for (const [n, label] of [[1, '免費漫畫'], [2, '付費漫畫']]) {
+      const b = el('button', { className: 'tab' + (homeCtx.freeType === n ? ' active' : ''), textContent: label });
+      b.onclick = () => { homeCtx = { ...homeCtx, mode: 'browse', q: '', freeType: n, theme: '' }; searchInput.value = ''; showHome(); };
+      ft.append(b);
+    }
+    view.append(ft);
+  }
   const tabs = el('div', { className: 'tabs' });
   for (const [ord, label] of [['-popular', '熱門'], ['-datetime_updated', '最近更新'], ['-datetime_created', '最新上架']]) {
     const b = el('button', { className: 'tab' + (homeCtx.mode === 'browse' && homeCtx.ordering === ord ? ' active' : ''), textContent: label });
@@ -168,7 +178,7 @@ async function showHome(keepInput = false) {
   view.append(tabs);
   // 題材橫向選擇條(僅瀏覽模式)
   if (homeCtx.mode === 'browse') {
-    const themes = await getThemes();
+    const themes = await getThemes(homeCtx.freeType);
     if (themes.length) {
       const trow = el('div', { className: 'tabs theme-row' });
       const chip = (pw, name) => {
