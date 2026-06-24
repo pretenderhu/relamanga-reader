@@ -3,7 +3,7 @@
 //  manga CDN images (cross-origin)    -> cache-first, version-independent (the downloaded pages; opaque OK)
 //  mangacopy API / reader pages       -> network-first, version-independent cache (so a downloaded
 //                                        chapter's image list + page HTML are readable offline)
-const VERSION = 'v2';
+const VERSION = 'v3';
 const SHELL = `shell-${VERSION}`, IMG = 'img', DATA = 'data';
 const SHELL_FILES = ['./', 'index.html', 'app.js', 'styles.css', 'manifest.webmanifest',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png'];

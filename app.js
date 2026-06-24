@@ -5,6 +5,7 @@
 // ---------------- config ----------------
 const API = 'https://api.manga2026.xyz/api/v3';     // 热辣漫画 search/browse
 const SITE = 'https://www.manga2026.xyz';            // 热辣漫画 reading
+const WORKER = 'https://relamanga-unlock.magana2026.workers.dev'; // unlock helper (logs in, returns full pages)
 let CCT = 'op0zzpvv.nmn.00p';                      // AES key (site's `var cct`; refreshed from reader pages)
 const APP_HEADERS = { version: '3.0.0', platform: '3', source: 'copyApp', webp: '1', region: '1' };
 
@@ -92,18 +93,37 @@ async function getComic(pw) {
 }
 
 // One request → reader page → decrypt the embedded contentKey → ordered image URLs.
-async function getImages(pw, uuid) {
-  try {
-    const html = await siteFetch(`${SITE}/comic/${pw}/chapter/${uuid}`).then(r => r.text());
-    const cct = (html.match(/var cct\s*=\s*'([^']*)'/) || [])[1];
-    if (cct) CCT = cct;
-    const ck = (html.match(/var contentKey\s*=\s*'([^']*)'/) || [])[1] || '';
-    if (ck) {
-      const arr = JSON.parse(await aesDecrypt(ck, cct || CCT));
-      return arr.map(x => x.url).filter(Boolean);
-    }
-  } catch { /* return empty; user can refresh */ }
+// client-side reader page → image URLs (with retry; the route can be flaky)
+async function siteImages(pw, uuid) {
+  for (let a = 0; a < 3; a++) {
+    try {
+      const html = await siteFetch(`${SITE}/comic/${pw}/chapter/${uuid}`).then(r => r.text());
+      const cct = (html.match(/var cct\s*=\s*'([^']*)'/) || [])[1];
+      if (cct) CCT = cct;
+      const ck = (html.match(/var contentKey\s*=\s*'([^']*)'/) || [])[1] || '';
+      if (ck) return JSON.parse(await aesDecrypt(ck, cct || CCT)).map(x => x.url).filter(Boolean);
+    } catch { /* retry */ }
+    if (a < 2) await new Promise(r => setTimeout(r, 700));
+  }
   return [];
+}
+// unlock helper (logs in server-side, returns FULL pages for login-gated chapters)
+async function workerImages(pw, uuid) {
+  if (!WORKER) return [];
+  for (let a = 0; a < 3; a++) {
+    try {
+      const d = await fetch(`${WORKER}/?pw=${encodeURIComponent(pw)}&uuid=${encodeURIComponent(uuid)}`).then(r => r.json());
+      if (d.images && d.images.length) return d.images;
+    } catch { /* flaky route — retry */ }
+    if (a < 2) await new Promise(r => setTimeout(r, 700));
+  }
+  return [];
+}
+async function getImages(pw, uuid) {
+  const imgs = await siteImages(pw, uuid);
+  if (imgs.length >= 10) return imgs;               // a full free chapter — done
+  const full = await workerImages(pw, uuid);         // short/gated → ask the unlock Worker
+  return full.length > imgs.length ? full : imgs;
 }
 
 // ---------------- DOM helpers ----------------
